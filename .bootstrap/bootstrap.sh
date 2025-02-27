@@ -1,16 +1,36 @@
 #!/bin/bash
 
-# Variables
-AWS_REGION="us-east-1"
+# Default values
+AWS_REGION="us-east-2"
 COMPANY_NAME="adnubes"
-AWS_PROFILE="enelson"
+AWS_PROFILE="default" # Fallback to default AWS profile if not specified
+
+# Parse command-line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --profile) AWS_PROFILE="$2"; shift ;;
+        --region) AWS_REGION="$2"; shift ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+# Validate required parameters
+if [[ -z "$AWS_PROFILE" ]]; then
+    echo "Error: AWS profile not specified."
+    exit 1
+fi
+if [[ -z "$AWS_REGION" ]]; then
+    echo "Error: AWS region not specified."
+    exit 1
+fi
 
 # Terraform State Backend Resources
-S3_BUCKET_NAME="${COMPANY_NAME}-tfstate-bucket"
-DYNAMODB_TABLE_NAME="${COMPANY_NAME}-tf-lock-table"
-KMS_KEY_ALIAS="alias/${COMPANY_NAME}-tfstate-key"
+S3_BUCKET_NAME="${COMPANY_NAME}-tfstate-bucket-${AWS_REGION}"
+DYNAMODB_TABLE_NAME="${COMPANY_NAME}-tf-lock-table-${AWS_REGION}"
+KMS_KEY_ALIAS="alias/${COMPANY_NAME}-tfstate-key-${AWS_REGION}"
 
-# IAM Role for Terraform Administration
+# IAM Role for Terraform Administration (Global, does not need per-region changes)
 IAM_ROLE_NAME="${COMPANY_NAME}-terraform-admin"
 IAM_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query "Account" --output text --profile "$AWS_PROFILE"):role/${IAM_ROLE_NAME}"
 
@@ -18,7 +38,7 @@ IAM_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query "Account" --out
 if ! aws s3api head-bucket --bucket "$S3_BUCKET_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE" 2>/dev/null; then
   echo "Creating S3 bucket: $S3_BUCKET_NAME"
   if [ "$AWS_REGION" = "us-east-1" ]; then
-    aws s3api create-bucket --bucket "$S3_BUCKET_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE"
+    aws s3api create-bucket --bucket "$S3_BUCKET_NAME" --profile "$AWS_PROFILE"
   else
     aws s3api create-bucket --bucket "$S3_BUCKET_NAME" --region "$AWS_REGION" --create-bucket-configuration LocationConstraint="$AWS_REGION" --profile "$AWS_PROFILE"
   fi
@@ -32,7 +52,7 @@ fi
 # Create KMS CMK if it doesn't exist
 if ! aws kms describe-key --key-id "$KMS_KEY_ALIAS" --region "$AWS_REGION" --profile "$AWS_PROFILE" 2>/dev/null; then
   echo "Creating KMS CMK for Terraform state encryption"
-  KMS_KEY_ID=$(aws kms create-key --description "Terraform State Encryption Key" \
+  KMS_KEY_ID=$(aws kms create-key --description "Terraform State Encryption Key (${AWS_REGION})" \
     --key-usage ENCRYPT_DECRYPT --customer-master-key-spec SYMMETRIC_DEFAULT \
     --query KeyMetadata.Arn --output text --region "$AWS_REGION" --profile "$AWS_PROFILE")
   aws kms create-alias --alias-name "$KMS_KEY_ALIAS" --target-key-id "$KMS_KEY_ID" --region "$AWS_REGION" --profile "$AWS_PROFILE"
@@ -47,7 +67,7 @@ if ! aws dynamodb describe-table --table-name "$DYNAMODB_TABLE_NAME" --region "$
     --billing-mode PAY_PER_REQUEST --region "$AWS_REGION" --profile "$AWS_PROFILE"
 fi
 
-# Create IAM Role for Terraform Administration if it doesn't exist
+# Create IAM Role for Terraform Administration if it doesn't exist (Global)
 if ! aws iam get-role --role-name "$IAM_ROLE_NAME" --profile "$AWS_PROFILE" 2>/dev/null; then
   echo "Creating IAM Role: $IAM_ROLE_NAME"
   aws iam create-role --role-name "$IAM_ROLE_NAME" --profile "$AWS_PROFILE" \
@@ -78,4 +98,4 @@ terraform {
 }
 EOF
 
-echo "Bootstrap complete! Terraform backend and IAM role are ready."
+echo "Bootstrap complete for region $AWS_REGION using profile $AWS_PROFILE! Terraform backend and IAM role are ready."
