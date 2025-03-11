@@ -1,8 +1,9 @@
 #!/bin/bash
+# To run script, execute "./bootstrap.sh --profile {aws-profile}  --region {aws-region}"
 
 # Default values
 AWS_REGION="us-east-2"
-COMPANY_NAME="adnubes"
+COMPANY_NAME="aethernubis"
 AWS_PROFILE="default" # Fallback to default AWS profile if not specified
 
 # Parse command-line arguments
